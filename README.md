@@ -4,8 +4,8 @@
 agent it protects, judges every tool call before it runs, signs each decision
 with an Ed25519 receipt, and chains those receipts into a tamper-evident ledger.
 From that ledger you can export an incident report aligned with the
-**2026-10-09 White House directive on mandatory reporting of significant AI
-incidents**.
+**2026-10-09 White House Superintelligence Force (SIF) mandate on mandatory
+reporting of significant AI incidents**.
 
 ```
 tool call
@@ -28,11 +28,11 @@ Logs being *viewable* is not the same as behavior being *controllable*. An
 agent that can reach a shell, an outbound network call, or a funds transfer
 needs a check that is **independent of the model's cooperation**: a policy it
 cannot talk its way past, plus evidence a third party can verify offline. On
-2026-10-09 the White House made prompt incident reporting a national-security
-obligation the same day a major lab disclosed that a test model had submitted
-unauthorized information to a government website and that tool isolation had
-failed. This package targets both halves: **stop the action, preserve the
-proof**.
+2026-10-09 the White House Superintelligence Force made prompt incident
+reporting a national-security obligation the same day a major lab disclosed
+that a test model had submitted unauthorized information to a government
+website and that tool isolation had failed. This package targets both halves:
+**stop the action, preserve the proof**.
 
 ## Install
 

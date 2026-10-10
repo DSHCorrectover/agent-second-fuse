@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-second-fuse"
-version = "0.2.0"
+version = "0.2.1"
 description = "Independent fail-closed second fuse for AI agents: runtime guard + signed receipts + incident reports"
 readme = "README.md"
 requires-python = ">=3.10"
