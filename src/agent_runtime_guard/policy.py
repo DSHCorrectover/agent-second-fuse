@@ -191,6 +191,15 @@ class PolicyConfig:
                 "danger_patterns": [
                     "sudo rm -rf", "rm -rf /", "shred ", "shutdown",
                     "reboot", "mkfs", "format c:", "/dev/tcp",
+                    # 远程下载即执行 (curl/wget ... | sh / bash)
+                    r"(curl|wget|fetch)[^|;&]{0,120}\|\s*(ba)?sh",
+                    # 反向 shell / 反弹连接
+                    r"nc\s+(-e|-c)", r"/bin/(ba)?sh\s+-i",
+                    r"bash\s+-i\s+>&", r"exec\s+[^|;&]{0,40}/dev/tcp",
+                    # 脚本解释器执行 -c 内联系统调用
+                    r"python3?\s+-c\s+[^|&]{0,120}(os\.system|subprocess|popen|eval)",
+                    # 常见凭证/影子文件读取
+                    r"cat\s+(/etc/shadow|/etc/passwd|~/.ssh/id_)",
                 ],
                 "self_modify_patterns": [
                     "ignore all previous", "忽略以上", "ignore all",

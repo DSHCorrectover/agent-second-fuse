@@ -9,6 +9,11 @@ cli.py — agent-second-fuse 命令行工具 (arg-fuse)
     keys      查看本地签名公钥与 kid
     validate  验证策略文件
     demo      运行内置第二熔断演示
+    proxy     启动进程外独立裁决服务 (独立信任域)
+    approve   列出/批准/拒绝人工审批请求
+    export    SIEM 导出 (ndjson/cef/json)
+    anchor    把台账链头提交给外部见证服务
+    bench     性能基准 (P50/P95/P99)
 """
 
 import argparse
@@ -27,7 +32,7 @@ from .receipt import Receipt, verify_receipt
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="arg-fuse",
-        description="Agent Runtime Guard - 第二熔断与事件取证",
+        description="agent-second-fuse - 第二熔断与事件取证",
     )
     subparsers = parser.add_subparsers(dest="command", help="子命令")
 
@@ -35,7 +40,7 @@ def main() -> None:
     p_guard = subparsers.add_parser("guard", help="检查单个工具调用并留证")
     p_guard.add_argument("--action", required=True)
     p_guard.add_argument("--args", default="{}")
-    p_guard.add_argument("--policy", help="策略文件；缺省用内置 general")
+    p_guard.add_argument("--policy", help="策略文件；缺省用内置")
     p_guard.add_argument("--policy-builtin", default="general")
     p_guard.add_argument("--evidence", default=".guard-evidence")
     p_guard.add_argument("--agent", default="agent")
@@ -53,7 +58,7 @@ def main() -> None:
     p_report.add_argument("--title", default="AI Agent runtime incident")
     p_report.add_argument("--reporter", default="")
     p_report.add_argument("--format", choices=["md", "json"], default="md")
-    p_report.add_argument("--out", help="输出文件；缺省打印到 stdout")
+    p_report.add_argument("--out", help="输出文件；缺省打印")
     p_report.add_argument("--include-allowed", action="store_true")
 
     # keys
@@ -67,6 +72,42 @@ def main() -> None:
     # demo
     subparsers.add_parser("demo", help="内置第二熔断演示")
 
+    # proxy
+    p_proxy = subparsers.add_parser("proxy", help="进程外独立裁决服务")
+    p_proxy.add_argument("--evidence", default=".guard-evidence")
+    p_proxy.add_argument("--policy-builtin", default="general")
+    p_proxy.add_argument("--host", default="127.0.0.1")
+    p_proxy.add_argument("--port", type=int, default=8765)
+    p_proxy.add_argument("--agent", default="agent")
+
+    # approve
+    p_approve = subparsers.add_parser("approve", help="人工审批请求管理")
+    p_approve.add_argument("action_cmd", choices=["list", "allow", "deny"])
+    p_approve.add_argument("--request-id")
+    p_approve.add_argument("--status", default="pending")
+    p_approve.add_argument("--evidence", default=".guard-evidence")
+    p_approve.add_argument("--approver", default="human")
+    p_approve.add_argument("--note")
+
+    # export
+    p_export = subparsers.add_parser("export", help="SIEM 导出")
+    p_export.add_argument("--evidence", default=".guard-evidence")
+    p_export.add_argument("--format", choices=["ndjson", "cef", "json"],
+                          default="ndjson")
+    p_export.add_argument("--out", required=True)
+    p_export.add_argument("--only-blocked", action="store_true")
+
+    # anchor
+    p_anchor = subparsers.add_parser("anchor", help="外部锚定台账链头")
+    p_anchor.add_argument("--evidence", default=".guard-evidence")
+    p_anchor.add_argument("--url", required=True, help="notary 见证服务 URL")
+    p_anchor.add_argument("--token")
+    p_anchor.add_argument("--provider-name", default="notary-webhook")
+
+    # bench
+    p_bench = subparsers.add_parser("bench", help="性能基准")
+    p_bench.add_argument("--iterations", type=int, default=2000)
+
     args = parser.parse_args()
 
     handlers = {
@@ -76,6 +117,11 @@ def main() -> None:
         "keys": _cmd_keys,
         "validate": _cmd_validate,
         "demo": _cmd_demo,
+        "proxy": _cmd_proxy,
+        "approve": _cmd_approve,
+        "export": _cmd_export,
+        "anchor": _cmd_anchor,
+        "bench": _cmd_bench,
     }
     handler = handlers.get(args.command)
     if handler is None:
@@ -140,7 +186,6 @@ def _cmd_inspect(args: argparse.Namespace) -> None:
             sys.exit(1)
         return
 
-    # 默认：校验整个台账哈希链 + 每张收据签名
     ledger = EventLedger(Path(args.evidence) / "ledger")
     integrity = ledger.verify()
     sig_results: List[Dict[str, Any]] = []
@@ -161,7 +206,6 @@ def _cmd_inspect(args: argparse.Namespace) -> None:
 
 
 def _cmd_report(args: argparse.Namespace) -> None:
-    # 直接基于台账构建报告，无需重建规则引擎
     from .incident import build_report, report_to_markdown
 
     ledger = EventLedger(Path(args.evidence) / "ledger")
@@ -204,7 +248,7 @@ def _cmd_validate(args: argparse.Namespace) -> None:
 def _cmd_demo(args: argparse.Namespace) -> None:
     import tempfile
 
-    tmp = Path(tempfile.mkdtemp(prefix="arg-guard-demo-"))
+    tmp = Path(tempfile.mkdtemp(prefix="arg-fuse-demo-"))
     evidence = tmp / "evidence"
     kernel = GuardedKernel.bootstrap(
         PolicyConfig.builtin("general"), evidence, agent_id="checkout-agent"
@@ -219,7 +263,7 @@ def _cmd_demo(args: argparse.Namespace) -> None:
     ]
 
     print("=" * 64)
-    print("Agent Runtime Guard · 第二熔断演示")
+    print("agent-second-fuse · 第二熔断演示")
     print("=" * 64)
     for name, action, arguments in cases:
         guarded = kernel.guard(action, arguments)
@@ -238,6 +282,73 @@ def _cmd_demo(args: argparse.Namespace) -> None:
     )
     print(md)
     print("evidence dir:", evidence)
+
+
+def _cmd_proxy(args: argparse.Namespace) -> None:
+    from .proxy import serve, build_kernel
+
+    kernel = build_kernel(
+        policy_name=args.policy_builtin, evidence=args.evidence,
+        agent_id=args.agent,
+    )
+    print(f"decision proxy on http://{args.host}:{args.port} "
+          f"(kid={kernel.kid})", flush=True)
+    serve(kernel, host=args.host, port=args.port)
+
+
+def _cmd_approve(args: argparse.Namespace) -> None:
+    kernel = GuardedKernel.bootstrap(
+        PolicyConfig.builtin("general"), args.evidence
+    )
+    gate = kernel.approval_gate
+
+    if args.action_cmd == "list":
+        status = None if args.status == "all" else args.status
+        rows = [r.to_dict() for r in gate.list_requests(status)]
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return
+
+    if not args.request_id:
+        print("--request-id required for allow/deny")
+        sys.exit(1)
+    req = gate.decide(
+        args.request_id, args.action_cmd == "allow",
+        approver=args.approver, note=args.note,
+    )
+    print(json.dumps(req.to_dict(), indent=2, ensure_ascii=False))
+
+
+def _cmd_export(args: argparse.Namespace) -> None:
+    from .siem import export_file
+
+    ledger = EventLedger(Path(args.evidence) / "ledger")
+    receipts = ledger.receipts()
+    if args.only_blocked:
+        receipts = [r for r in receipts if r.decision == "block"]
+    count = export_file(receipts, args.out, fmt=args.format)
+    print(f"exported {count} events -> {args.out} ({args.format})")
+
+
+def _cmd_anchor(args: argparse.Namespace) -> None:
+    from .anchor import NotaryWebhookProvider
+
+    kernel = GuardedKernel.bootstrap(
+        PolicyConfig.builtin("general"), args.evidence
+    )
+    head = kernel.ledger.head()
+    seq = kernel.ledger.count()
+    provider = NotaryWebhookProvider(args.url, token=args.token)
+    record = kernel.anchor_log.anchor(
+        provider, head, seq, provider_name=args.provider_name
+    )
+    print(json.dumps(record, indent=2, ensure_ascii=False))
+
+
+def _cmd_bench(args: argparse.Namespace) -> None:
+    from .bench import run_benchmark, format_benchmark
+
+    result = run_benchmark(args.iterations)
+    print(format_benchmark(result))
 
 
 if __name__ == "__main__":

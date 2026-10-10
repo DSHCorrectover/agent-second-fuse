@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .anchor import AnchorLog
+from .approval import ApprovalGate, ApprovalRequest
 from .incident import build_report, report_to_markdown
 from .kernel import SecurityKernel
 from .keys import Signer
@@ -69,6 +71,7 @@ class GuardedKernel:
         agent_id: str = "agent",
         enable_identity: bool = True,
         record_parameters: bool = True,
+        approval_ttl: int = 3600,
     ) -> None:
         self.kernel = SecurityKernel(policy, enable_identity=enable_identity)
         self._evidence_dir = Path(evidence_dir)
@@ -79,6 +82,10 @@ class GuardedKernel:
         self.signer = Signer.load_or_create(self._evidence_dir / "keys")
         self.receipt_signer = ReceiptSigner(self.signer)
         self.ledger = EventLedger(self._evidence_dir / "ledger")
+        self.approval_gate = ApprovalGate(
+            self._evidence_dir / "approval", default_ttl=approval_ttl
+        )
+        self.anchor_log = AnchorLog(self._evidence_dir / "anchor")
 
     # ------------------------------------------------------------------
     @classmethod
@@ -131,6 +138,57 @@ class GuardedKernel:
         )
         self.ledger.append(receipt)
         return GuardedResult(result=result, receipt=receipt)
+
+    # ------------------------------------------------------------------
+    def check(
+        self,
+        action: str,
+        arguments: Optional[Dict[str, Any]] = None,
+        *,
+        require_approval: bool = False,
+        agent_id: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        """供强制点 (wrap/proxy) 使用：裁决 + 审批门，返回决策字典，不执行动作。
+
+        返回 decision:
+            "block"   策略拦截（已留 block 收据）；
+            "pending" 需要人工审批且尚未批准（动作必须保持不执行）；
+            "allow"   放行（已留 allow 收据）。
+        """
+        verdict = self.guard(
+            action, arguments, agent_id=agent_id, **kwargs
+        )
+        if verdict.blocked:
+            return {
+                "decision": "block",
+                "reason": verdict.result.reason,
+                "rule": verdict.result.rule,
+                "layer": verdict.result.module,
+                "receipt_id": verdict.receipt.receipt_id,
+            }
+
+        if require_approval:
+            approved: Optional[ApprovalRequest]
+            approved = self.approval_gate.is_approved(action, arguments)
+            if approved is None:
+                req = self.approval_gate.create(
+                    action, arguments,
+                    reason="action requires human approval",
+                    requested_by=agent_id or self._agent_id,
+                )
+                return {
+                    "decision": "pending",
+                    "request_id": req.request_id,
+                    "reason": "human approval required",
+                    "ttl_seconds": self.approval_gate._default_ttl,
+                }
+        return {
+            "decision": "allow",
+            "reason": verdict.result.reason,
+            "rule": verdict.result.rule,
+            "receipt_id": verdict.receipt.receipt_id,
+        }
 
     # ------------------------------------------------------------------
     def verify_evidence(self) -> LedgerIntegrity:

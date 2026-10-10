@@ -57,6 +57,30 @@ class EventLedger:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._path = self._dir / LEDGER_NAME
         self._head_path = self._dir / HEAD_NAME
+        # 热路径缓存：append 只需链头与序号，不再每次读全文件。
+        self._cached_head: Optional[str] = None
+        self._cached_seq: Optional[int] = None
+        self._head_fd = None
+        self._ledger_fd = None
+
+    def _tip(self) -> tuple[str, int]:
+        """返回 (当前链头, 当前序号)，优先 head 文件 + 计数缓存。"""
+        if self._cached_head is None:
+            if self._head_path.exists():
+                self._cached_head = self._head_path.read_text(
+                    encoding="utf-8"
+                ).strip()
+            else:
+                entries = self._read_entries()
+                self._cached_head = (entries[-1]["entry_hash"]
+                                     if entries else GENESIS)
+                self._cached_seq = len(entries)
+        if self._cached_seq is None:
+            # 只在确有序号需求时读一次；云盘上 count 走缓存避免反复扫描。
+            self._cached_seq = sum(
+                1 for _ in self._path.open(encoding="utf-8")
+            ) if self._path.exists() else 0
+        return self._cached_head, self._cached_seq
 
     # ------------------------------------------------------------------
     @property
@@ -74,13 +98,10 @@ class EventLedger:
         return entries
 
     def count(self) -> int:
-        return len(self._read_entries())
+        return self._tip()[1]
 
     def head(self) -> str:
-        if self._head_path.exists():
-            return self._head_path.read_text(encoding="utf-8").strip()
-        entries = self._read_entries()
-        return entries[-1]["entry_hash"] if entries else GENESIS
+        return self._tip()[0]
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -90,22 +111,34 @@ class EventLedger:
 
     def append(self, receipt: Receipt) -> Dict[str, Any]:
         """把一张收据追加到台账尾部，返回写入的 entry。"""
-        entries = self._read_entries()
-        prev_hash = entries[-1]["entry_hash"] if entries else GENESIS
-        seq = len(entries) + 1
+        prev_hash, prev_seq = self._tip()
 
         envelope = receipt.envelope
         entry_hash = self._entry_hash(prev_hash, envelope)
+        seq = prev_seq + 1
         entry = {
             "seq": seq,
             "receipt_id": receipt.receipt_id,
             "entry_hash": entry_hash,
             "envelope": envelope,
         }
-        with self._path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        self._head_path.write_text(entry_hash, encoding="utf-8")
+        if self._ledger_fd is None:
+            self._ledger_fd = open(self._path, "a", encoding="utf-8")
+        self._ledger_fd.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        self._ledger_fd.flush()
+        self._write_head(entry_hash)
+        self._cached_head = entry_hash
+        self._cached_seq = seq
         return entry
+
+    def _write_head(self, entry_hash: str) -> None:
+        """更新链头指针；复用常驻 fd 做一次截断写，避免反复 open 的开销。"""
+        if self._head_fd is None:
+            self._head_fd = open(self._head_path, "w", encoding="utf-8")
+        self._head_fd.seek(0)
+        self._head_fd.truncate()
+        self._head_fd.write(entry_hash)
+        self._head_fd.flush()
 
     # ------------------------------------------------------------------
     def receipts(self) -> List[Receipt]:
