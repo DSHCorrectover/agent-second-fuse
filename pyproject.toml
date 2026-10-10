@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-second-fuse"
+version = "0.2.0"
+description = "Independent fail-closed second fuse for AI agents: runtime guard + signed receipts + incident reports"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+keywords = [
+    "agent",
+    "security",
+    "guardrail",
+    "runtime-verification",
+    "ai-safety",
+    "incident-reporting",
+    "evidence",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Security",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+]
+dependencies = [
+    "cryptography>=42.0",
+]
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=6.0"]
+dev = ["pytest>=8.0", "build>=1.0", "twine>=5.0"]
+
+[project.scripts]
+arg-fuse = "agent_runtime_guard.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/DSHCorrectover/agent-second-fuse"
+Repository = "https://github.com/DSHCorrectover/agent-second-fuse"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
